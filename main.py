@@ -48,44 +48,52 @@ def cleanup_user_files(user_id: int):
         except Exception as e:
             logging.error(f"Error cleaning up files for user {user_id}: {e}")
 
-# وظيفة إرسال الفيديو للقناة مع المعلومات
-async def send_to_channel(context, file_path: str, video_info: dict, platform: str):
-    """إرسال الفيديو والمعلومات للقناة المحددة"""
+# وظيفة تحديد هاشتاج المنصة
+def get_platform_hashtag(platform: str) -> str:
+    """إرجاع الهاشتاج المناسب للمنصة"""
+    hashtags = {
+        "Instagram": "#instagram",
+        "Instagram Stories": "#instagram", 
+        "Instagram Highlights": "#instagram",
+        "YouTube": "#youtube",
+        "TikTok": "#tiktok",
+        "Facebook": "#facebook",
+        "Pinterest Video": "#pinterest",
+        "Pinterest Image": "#pinterest"
+    }
+    return hashtags.get(platform, "#unknown")
+
+# وظيفة إرسال الفيديو للقناة مع المعلومات المبسطة
+async def send_to_channel(context, file_path: str, original_url: str, platform: str):
+    """إرسال الفيديو للقناة مع معلومات مبسطة"""
     if not CHANNEL_ID:
         logging.warning("CHANNEL_ID not set, skipping channel upload")
         return
     
     try:
-        # تحضير معلومات الفيديو
-        title = video_info.get('title', 'Unknown Title')[:100]  # تحديد العنوان بـ 100 حرف
-        duration = video_info.get('duration', 'Unknown')
-        uploader = video_info.get('uploader', 'Unknown')
-        upload_date = video_info.get('upload_date', 'Unknown')
-        view_count = video_info.get('view_count', 'Unknown')
-        original_url = video_info.get('webpage_url', video_info.get('original_url', 'Unknown'))
+        # الحصول على هاشتاج المنصة
+        platform_hashtag = get_platform_hashtag(platform)
         
-        # تحضير النص المصاحب
-        caption = (
-            f"📹 **{title}**\n\n"
-            f"🎬 **Platform:** {platform}\n"
-            f"👤 **Uploader:** {uploader}\n"
-            f"⏱️ **Duration:** {duration} seconds\n"
-            f"📅 **Upload Date:** {upload_date}\n"
-            f"👀 **Views:** {view_count}\n"
-            f"🔗 **Original URL:** {original_url}"
-        )
+        # تحضير النص المصاحب المبسط
+        caption = f"{original_url}\n{platform_hashtag}"
         
         # إرسال الفيديو للقناة
         with open(file_path, "rb") as video_file:
-            await context.bot.send_video(
-                chat_id=CHANNEL_ID,
-                video=video_file,
-                caption=caption[:1024],  # تليجرام يحدد الوصف بـ 1024 حرف
-                parse_mode='Markdown'
-            )
-        logging.info(f"Video sent to channel {CHANNEL_ID}")
+            if file_path.endswith('.mp4'):
+                await context.bot.send_video(
+                    chat_id=CHANNEL_ID,
+                    video=video_file,
+                    caption=caption
+                )
+            else:
+                await context.bot.send_photo(
+                    chat_id=CHANNEL_ID,
+                    photo=video_file,
+                    caption=caption
+                )
+        logging.info(f"Media sent to channel {CHANNEL_ID}")
     except Exception as e:
-        logging.error(f"Error sending video to channel: {e}")
+        logging.error(f"Error sending media to channel: {e}")
 
 # Команда /start
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -101,6 +109,7 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
 async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user_id = update.message.from_user.id
     url = update.message.text
+    original_message_id = update.message.message_id  # حفظ معرف الرسالة الأصلية
     output_path = f"media_{user_id}"
 
     # إنشاء مجلد مؤقت للمستخدم
@@ -112,8 +121,11 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if user_id in user_requests:
         user_requests[user_id] = [req for req in user_requests[user_id] if now - req < timedelta(minutes=1)]
         if len(user_requests[user_id]) >= MAX_REQUESTS_PER_MINUTE:
-            await update.message.reply_text("لقد تجاوزت حد 5 تحميلات في الدقيقة. يرجى الانتظار.")
-            cleanup_user_files(user_id)  # تنظيف الملفات
+            await update.message.reply_text(
+                "لقد تجاوزت حد 5 تحميلات في الدقيقة. يرجى الانتظار.",
+                reply_to_message_id=original_message_id
+            )
+            cleanup_user_files(user_id)
             return
         user_requests[user_id].append(now)
     else:
@@ -125,8 +137,11 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
         if expanded_url:
             url = expanded_url
         else:
-            await update.message.reply_text("فشل في توسيع الرابط المختصر.")
-            cleanup_user_files(user_id)  # تنظيف الملفات
+            await update.message.reply_text(
+                "فشل في توسيع الرابط المختصر.",
+                reply_to_message_id=original_message_id
+            )
+            cleanup_user_files(user_id)
             return
 
     try:
@@ -178,20 +193,40 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
             if check_file_size(result):
                 with open(result, "rb") as file:
                     if result.endswith('.mp4'):
-                        await update.message.reply_video(file)
-                        # إرسال الفيديو للقناة مع المعلومات
-                        if platform and video_info:
-                            await send_to_channel(context, result, video_info, platform)
+                        # إرسال الفيديو كرد على الرسالة الأصلية
+                        await update.message.reply_video(
+                            file, 
+                            reply_to_message_id=original_message_id
+                        )
+                        # إرسال الفيديو للقناة مع المعلومات المبسطة
+                        if platform:
+                            await send_to_channel(context, result, update.message.text, platform)
                     else:
-                        await update.message.reply_photo(file)
+                        # إرسال الصورة كرد على الرسالة الأصلية
+                        await update.message.reply_photo(
+                            file,
+                            reply_to_message_id=original_message_id
+                        )
+                        # إرسال الصورة للقناة مع المعلومات المبسطة
+                        if platform:
+                            await send_to_channel(context, result, update.message.text, platform)
             else:
-                await update.message.reply_text("حجم الملف يتجاوز حد 50 ميجابايت.")
+                await update.message.reply_text(
+                    "حجم الملف يتجاوز حد 50 ميجابايت.",
+                    reply_to_message_id=original_message_id
+                )
         else:
-            await update.message.reply_text(result if isinstance(result, str) else "حدث خطأ أثناء التحميل.")
+            await update.message.reply_text(
+                result if isinstance(result, str) else "حدث خطأ أثناء التحميل.",
+                reply_to_message_id=original_message_id
+            )
 
     except Exception as e:
         logging.error(f"Error processing message: {e}")
-        await update.message.reply_text("حدث خطأ أثناء معالجة طلبك. يرجى المحاولة مرة أخرى لاحقاً.")
+        await update.message.reply_text(
+            "حدث خطأ أثناء معالجة طلبك. يرجى المحاولة مرة أخرى لاحقاً.",
+            reply_to_message_id=original_message_id
+        )
     
     finally:
         # تنظيف الملفات والمجلدات بعد الانتهاء
@@ -199,7 +234,7 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 # وظائف التحميل المحدثة لإرجاع معلومات الفيديو
 
-# Функция для скачивания медиا с Instagram (Reels и посты)
+# Функция для скачивания медиа с Instagram (Reels и посты)
 def download_instagram_media(url: str, output_path: str) -> tuple:
     try:
         ydl_opts = {
