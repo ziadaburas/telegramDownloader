@@ -1,0 +1,7 @@
+python-telegram-bot
+yt-dlp
+instaloader
+aiohttp
+pyquery
+requests
+python-dotenv
