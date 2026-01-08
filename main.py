@@ -12,6 +12,9 @@ from pyquery import PyQuery as pq
 import requests
 import json
 from dotenv import load_dotenv
+from flask import Flask, render_template_string, request, send_file, jsonify
+import threading
+import asyncio
 
 # تحميل متغيرات البيئة
 load_dotenv()
@@ -19,6 +22,7 @@ load_dotenv()
 # إعدادات من متغيرات البيئة
 BOT_TOKEN = os.getenv("BOT_TOKEN")
 CHANNEL_ID = os.getenv("CHANNEL_ID")
+FLASK_PORT = int(os.getenv("FLASK_PORT", "5000"))
 
 # Константы
 MAX_FILE_SIZE = 50 * 1024 * 1024  # 50 MB
@@ -32,6 +36,318 @@ logging.basicConfig(
     format='%(asctime)s - %(name)s - %(levelname)s - %(message)s',
     level=logging.INFO
 )
+
+# إنشاء تطبيق Flask
+app = Flask(__name__)
+
+# HTML Template للصفحة الرئيسية
+HTML_TEMPLATE = """
+<!DOCTYPE html>
+<html lang="ar" dir="rtl">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>تحميل الفيديوهات</title>
+    <style>
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+        
+        body {
+            font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            min-height: 100vh;
+            display: flex;
+            justify-content: center;
+            align-items: center;
+            padding: 20px;
+        }
+        
+        .container {
+            background: white;
+            border-radius: 20px;
+            padding: 40px;
+            box-shadow: 0 20px 60px rgba(0, 0, 0, 0.3);
+            max-width: 600px;
+            width: 100%;
+        }
+        
+        h1 {
+            color: #667eea;
+            text-align: center;
+            margin-bottom: 10px;
+            font-size: 2.5em;
+        }
+        
+        .subtitle {
+            text-align: center;
+            color: #666;
+            margin-bottom: 30px;
+            font-size: 1.1em;
+        }
+        
+        .platforms {
+            display: flex;
+            justify-content: center;
+            gap: 15px;
+            margin-bottom: 30px;
+            flex-wrap: wrap;
+        }
+        
+        .platform-badge {
+            background: #f0f0f0;
+            padding: 8px 16px;
+            border-radius: 20px;
+            font-size: 0.9em;
+            color: #555;
+        }
+        
+        .input-group {
+            margin-bottom: 20px;
+        }
+        
+        label {
+            display: block;
+            margin-bottom: 8px;
+            color: #333;
+            font-weight: bold;
+        }
+        
+        input[type="text"] {
+            width: 100%;
+            padding: 15px;
+            border: 2px solid #e0e0e0;
+            border-radius: 10px;
+            font-size: 1em;
+            transition: border-color 0.3s;
+        }
+        
+        input[type="text"]:focus {
+            outline: none;
+            border-color: #667eea;
+        }
+        
+        .btn {
+            width: 100%;
+            padding: 15px;
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            color: white;
+            border: none;
+            border-radius: 10px;
+            font-size: 1.1em;
+            font-weight: bold;
+            cursor: pointer;
+            transition: transform 0.2s, box-shadow 0.2s;
+        }
+        
+        .btn:hover {
+            transform: translateY(-2px);
+            box-shadow: 0 10px 20px rgba(102, 126, 234, 0.3);
+        }
+        
+        .btn:disabled {
+            background: #ccc;
+            cursor: not-allowed;
+            transform: none;
+        }
+        
+        .message {
+            margin-top: 20px;
+            padding: 15px;
+            border-radius: 10px;
+            text-align: center;
+            display: none;
+        }
+        
+        .message.success {
+            background: #d4edda;
+            color: #155724;
+            border: 1px solid #c3e6cb;
+        }
+        
+        .message.error {
+            background: #f8d7da;
+            color: #721c24;
+            border: 1px solid #f5c6cb;
+        }
+        
+        .message.info {
+            background: #d1ecf1;
+            color: #0c5460;
+            border: 1px solid #bee5eb;
+        }
+        
+        .loader {
+            border: 4px solid #f3f3f3;
+            border-top: 4px solid #667eea;
+            border-radius: 50%;
+            width: 40px;
+            height: 40px;
+            animation: spin 1s linear infinite;
+            margin: 20px auto;
+            display: none;
+        }
+        
+        @keyframes spin {
+            0% { transform: rotate(0deg); }
+            100% { transform: rotate(360deg); }
+        }
+        
+        .info-box {
+            background: #f8f9fa;
+            border-right: 4px solid #667eea;
+            padding: 15px;
+            border-radius: 8px;
+            margin-top: 20px;
+        }
+        
+        .info-box h3 {
+            color: #667eea;
+            margin-bottom: 10px;
+        }
+        
+        .info-box ul {
+            list-style-position: inside;
+            color: #666;
+        }
+        
+        .info-box li {
+            margin: 5px 0;
+        }
+        
+        @media (max-width: 600px) {
+            .container {
+                padding: 20px;
+            }
+            
+            h1 {
+                font-size: 2em;
+            }
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <h1>📥 تحميل الفيديوهات</h1>
+        <p class="subtitle">حمل الفيديوهات والصور من منصات التواصل الاجتماعي</p>
+        
+        <div class="platforms">
+            <span class="platform-badge">📷 Instagram</span>
+            <span class="platform-badge">▶️ YouTube</span>
+            <span class="platform-badge">🎵 TikTok</span>
+            <span class="platform-badge">📘 Facebook</span>
+            <span class="platform-badge">📌 Pinterest</span>
+        </div>
+        
+        <form id="downloadForm">
+            <div class="input-group">
+                <label for="url">🔗 أدخل الرابط:</label>
+                <input type="text" id="url" name="url" placeholder="https://www.instagram.com/reel/..." required>
+            </div>
+            
+            <button type="submit" class="btn" id="submitBtn">تحميل الآن</button>
+        </form>
+        
+        <div class="loader" id="loader"></div>
+        <div class="message" id="message"></div>
+        
+        <div class="info-box">
+            <h3>ℹ️ معلومات:</h3>
+            <ul>
+                <li>الحد الأقصى لحجم الملف: 50 ميجابايت</li>
+                <li>جميع الملفات يتم معالجتها في الذاكرة</li>
+                <li>يتم حذف الملفات تلقائياً بعد التحميل</li>
+            </ul>
+        </div>
+    </div>
+    
+    <script>
+        const form = document.getElementById('downloadForm');
+        const submitBtn = document.getElementById('submitBtn');
+        const loader = document.getElementById('loader');
+        const message = document.getElementById('message');
+        const urlInput = document.getElementById('url');
+        
+        form.addEventListener('submit', async (e) => {
+            e.preventDefault();
+            
+            const url = urlInput.value.trim();
+            
+            if (!url) {
+                showMessage('يرجى إدخال رابط صحيح', 'error');
+                return;
+            }
+            
+            // إظهار مؤشر التحميل
+            submitBtn.disabled = true;
+            submitBtn.textContent = 'جاري التحميل...';
+            loader.style.display = 'block';
+            message.style.display = 'none';
+            
+            try {
+                const response = await fetch('/download', {
+                    method: 'POST',
+                    headers: {
+                        'Content-Type': 'application/json',
+                    },
+                    body: JSON.stringify({ url: url })
+                });
+                
+                if (response.ok) {
+                    // الحصول على اسم الملف من الهيدر
+                    const contentDisposition = response.headers.get('Content-Disposition');
+                    let filename = 'vid.mp4';
+                    
+                    if (contentDisposition) {
+                        const filenameMatch = contentDisposition.match(/filename="(.+)"/);
+                        if (filenameMatch) {
+                            filename = filenameMatch[1];
+                        }
+                    }
+                    
+                    // تحميل الملف
+                    const blob = await response.blob();
+                    const downloadUrl = window.URL.createObjectURL(blob);
+                    const a = document.createElement('a');
+                    a.href = downloadUrl;
+                    a.download = filename;
+                    document.body.appendChild(a);
+                    a.click();
+                    window.URL.revokeObjectURL(downloadUrl);
+                    a.remove();
+                    
+                    showMessage('✅ تم تحميل الملف بنجاح!', 'success');
+                    urlInput.value = '';
+                } else {
+                    const errorData = await response.json();
+                    showMessage('❌ ' + (errorData.error || 'حدث خطأ أثناء التحميل'), 'error');
+                }
+            } catch (error) {
+                showMessage('❌ حدث خطأ في الاتصال. يرجى المحاولة مرة أخرى.', 'error');
+                console.error('Error:', error);
+            } finally {
+                submitBtn.disabled = false;
+                submitBtn.textContent = 'تحميل الآن';
+                loader.style.display = 'none';
+            }
+        });
+        
+        function showMessage(text, type) {
+            message.textContent = text;
+            message.className = 'message ' + type;
+            message.style.display = 'block';
+            
+            // إخفاء الرسالة بعد 5 ثواني
+            setTimeout(() => {
+                message.style.display = 'none';
+            }, 5000);
+        }
+    </script>
+</body>
+</html>
+"""
 
 # Проверка размера البيانات في الذاكرة
 def check_data_size(data: bytes) -> bool:
@@ -132,54 +448,13 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
             return
 
     try:
-        result = None
-        platform = None
-        is_video = True
-        media_data = None
+        result = await process_download(url)
         
-        if "instagram.com" in url:
-            if "/stories/" in url:
-                username = url.split("/stories/")[1].split("/")[0]
-                media_data = await download_instagram_stories(username)
-                platform = "Instagram Stories"
-            elif "/reel/" in url or "/p/" in url:
-                media_data = await download_instagram_media(url)
-                platform = "Instagram"
-            elif "/highlights/" in url:
-                username = url.split("/highlights/")[1].split("/")[0]
-                media_data = await download_instagram_highlights(username)
-                platform = "Instagram Highlights"
-            else:
-                result = "رابط Instagram غير مدعوم."
-                platform = None
-        elif "youtube.com" in url or "youtu.be" in url:
-            media_data = await download_youtube_video(url)
-            platform = "YouTube"
-        elif "tiktok.com" in url:
-            media_data = await download_tiktok_video(url)
-            platform = "TikTok"
-        elif "facebook.com" in url:
-            media_data = await download_facebook_video(url)
-            platform = "Facebook"
-        elif "pinterest.com" in url:
-            download_url = await get_download_url(url)
-            if download_url:
-                if '.mp4' in download_url:
-                    media_data = await download_video(download_url)
-                    platform = "Pinterest Video"
-                    is_video = True
-                else:
-                    media_data = await download_image(download_url)
-                    platform = "Pinterest Image"
-                    is_video = False
-            else:
-                result = "فشل في الحصول على رابط التحميل من Pinterest."
-                platform = None
-        else:
-            result = "منصة غير مدعومة. يرجى تقديم رابط صحيح."
-            platform = None
-
-        if media_data and isinstance(media_data, BytesIO):
+        if result['success']:
+            media_data = result['data']
+            platform = result['platform']
+            is_video = result['is_video']
+            
             # الحصول على البيانات للتحقق من الحجم
             media_bytes = media_data.getvalue()
             
@@ -214,15 +489,9 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
             
             # حذف البيانات من الذاكرة
             media_data.close()
-        elif isinstance(media_data, str):
-            # في حالة وجود رسالة خطأ
-            await update.message.reply_text(
-                media_data,
-                reply_to_message_id=original_message_id
-            )
         else:
             await update.message.reply_text(
-                result if isinstance(result, str) else "حدث خطأ أثناء التحميل.",
+                result['error'],
                 reply_to_message_id=original_message_id
             )
 
@@ -232,6 +501,98 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
             "حدث خطأ أثناء معالجة طلبك. يرجى المحاولة مرة أخرى لاحقاً.",
             reply_to_message_id=original_message_id
         )
+
+# وظيفة معالجة التحميل (مشتركة بين البوت والويب)
+async def process_download(url: str) -> dict:
+    """معالجة تحميل الرابط وإرجاع النتيجة"""
+    try:
+        # Если ссылка сокращённая (pin.it), преобразуем её в полный URL
+        if url.startswith("https://pin.it/"):
+            expanded_url = expand_short_url(url)
+            if expanded_url:
+                url = expanded_url
+            else:
+                return {
+                    'success': False,
+                    'error': 'فشل في توسيع الرابط المختصر.'
+                }
+
+        result = None
+        platform = None
+        is_video = True
+        media_data = None
+        
+        if "instagram.com" in url:
+            if "/stories/" in url:
+                username = url.split("/stories/")[1].split("/")[0]
+                media_data = await download_instagram_stories(username)
+                platform = "Instagram Stories"
+            elif "/reel/" in url or "/p/" in url:
+                media_data = await download_instagram_media(url)
+                platform = "Instagram"
+            elif "/highlights/" in url:
+                username = url.split("/highlights/")[1].split("/")[0]
+                media_data = await download_instagram_highlights(username)
+                platform = "Instagram Highlights"
+            else:
+                return {
+                    'success': False,
+                    'error': 'رابط Instagram غير مدعوم.'
+                }
+        elif "youtube.com" in url or "youtu.be" in url:
+            media_data = await download_youtube_video(url)
+            platform = "YouTube"
+        elif "tiktok.com" in url:
+            media_data = await download_tiktok_video(url)
+            platform = "TikTok"
+        elif "facebook.com" in url:
+            media_data = await download_facebook_video(url)
+            platform = "Facebook"
+        elif "pinterest.com" in url:
+            download_url = await get_download_url(url)
+            if download_url:
+                if '.mp4' in download_url:
+                    media_data = await download_video(download_url)
+                    platform = "Pinterest Video"
+                    is_video = True
+                else:
+                    media_data = await download_image(download_url)
+                    platform = "Pinterest Image"
+                    is_video = False
+            else:
+                return {
+                    'success': False,
+                    'error': 'فشل في الحصول على رابط التحميل من Pinterest.'
+                }
+        else:
+            return {
+                'success': False,
+                'error': 'منصة غير مدعومة. يرجى تقديم رابط صحيح.'
+            }
+
+        if media_data and isinstance(media_data, BytesIO):
+            return {
+                'success': True,
+                'data': media_data,
+                'platform': platform,
+                'is_video': is_video
+            }
+        elif isinstance(media_data, str):
+            return {
+                'success': False,
+                'error': media_data
+            }
+        else:
+            return {
+                'success': False,
+                'error': 'حدث خطأ أثناء التحميل.'
+            }
+    except Exception as e:
+        logging.error(f"Error in process_download: {e}")
+        return {
+            'success': False,
+            'error': f'حدث خطأ: {str(e)}'
+        }
 
 # وظائف التحميل المحدثة لاستخدام الذاكرة
 
@@ -489,8 +850,64 @@ async def download_image(url: str) -> BytesIO:
         logging.error(f"Error downloading Pinterest image: {e}")
         return f"Error downloading Pinterest image: {e}"
 
-# Основная функция
-def main():
+# Flask Routes
+@app.route('/')
+def index():
+    """الصفحة الرئيسية"""
+    return render_template_string(HTML_TEMPLATE)
+
+@app.route('/download', methods=['POST'])
+def download():
+    """معالج التحميل عبر الويب"""
+    try:
+        data = request.get_json()
+        url = data.get('url')
+        
+        if not url:
+            return jsonify({'error': 'يرجى تقديم رابط'}), 400
+        
+        # تشغيل الوظيفة async في loop جديد
+        loop = asyncio.new_event_loop()
+        asyncio.set_event_loop(loop)
+        result = loop.run_until_complete(process_download(url))
+        loop.close()
+        
+        if result['success']:
+            media_data = result['data']
+            is_video = result['is_video']
+            
+            # التحقق من الحجم
+            media_bytes = media_data.getvalue()
+            if not check_data_size(media_bytes):
+                media_data.close()
+                return jsonify({'error': 'حجم الملف يتجاوز حد 50 ميجابايت'}), 400
+            
+            # إعادة تعيين المؤشر
+            media_data.seek(0)
+            
+            # تحديد نوع المحتوى واسم الملف
+            mimetype = 'video/mp4' if is_video else 'image/jpeg'
+            filename = 'vid.mp4'
+            
+            return send_file(
+                media_data,
+                mimetype=mimetype,
+                as_attachment=True,
+                download_name=filename
+            )
+        else:
+            return jsonify({'error': result['error']}), 400
+            
+    except Exception as e:
+        logging.error(f"Error in /download endpoint: {e}")
+        return jsonify({'error': 'حدث خطأ أثناء معالجة الطلب'}), 500
+
+# تشغيل Flask في thread منفصل
+def run_flask():
+    app.run(host='0.0.0.0', port=FLASK_PORT, debug=False, use_reloader=False)
+
+# تشغيل Telegram Bot
+def run_bot():
     if not BOT_TOKEN:
         logging.error("BOT_TOKEN environment variable is not set!")
         return
@@ -505,6 +922,26 @@ def main():
 
     logging.info("Bot started successfully!")
     application.run_polling()
+
+# Основная функция
+def main():
+    logging.info("Starting application...")
+    
+    # تشغيل Flask في thread منفصل
+    flask_thread = threading.Thread(target=run_flask, daemon=True)
+    flask_thread.start()
+    logging.info(f"Flask web server started on port {FLASK_PORT}")
+    
+    # تشغيل البوت في الـ main thread
+    if BOT_TOKEN:
+        run_bot()
+    else:
+        logging.warning("BOT_TOKEN not set. Running web server only.")
+        # إبقاء البرنامج يعمل إذا كان البوت غير مفعل
+        try:
+            flask_thread.join()
+        except KeyboardInterrupt:
+            logging.info("Application stopped by user")
 
 if __name__ == '__main__':
     main()

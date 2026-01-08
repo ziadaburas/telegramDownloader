@@ -5,3 +5,4 @@ aiohttp
 pyquery
 requests
 python-dotenv
+flask
