@@ -15,6 +15,7 @@ from dotenv import load_dotenv
 from flask import Flask, render_template_string, request, send_file, jsonify
 import threading
 import asyncio
+from apscheduler.schedulers.background import BackgroundScheduler
 
 # تحميل متغيرات البيئة
 load_dotenv()
@@ -23,6 +24,7 @@ load_dotenv()
 BOT_TOKEN = os.getenv("BOT_TOKEN")
 CHANNEL_ID = os.getenv("CHANNEL_ID")
 FLASK_PORT = int(os.getenv("FLASK_PORT", "5000"))
+PAIR_SITE = os.getenv("PAIR_SITE") # New: PAIR_SITE environment variable
 
 # Константы
 MAX_FILE_SIZE = 50 * 1024 * 1024  # 50 MB
@@ -39,6 +41,25 @@ logging.basicConfig(
 
 # إنشاء تطبيق Flask
 app = Flask(__name__)
+
+# New: /check endpoint
+@app.route('/check')
+def check_server_status():
+    return jsonify({"status": "available", "message": "Server is running"})
+
+# Function to check PAIR_SITE availability
+def check_pair_site_availability():
+    if PAIR_SITE:
+        try:
+            response = requests.get(PAIR_SITE, timeout=10)
+            if response.status_code == 200:
+                logging.info(f"PAIR_SITE ({PAIR_SITE}) is AVAILABLE. Status Code: {response.status_code}")
+            else:
+                logging.warning(f"PAIR_SITE ({PAIR_SITE}) returned status code: {response.status_code}")
+        except requests.exceptions.RequestException as e:
+            logging.error(f"Error checking PAIR_SITE ({PAIR_SITE}): {e}")
+    else:
+        logging.info("PAIR_SITE environment variable not set. Skipping availability check.")
 
 # HTML Template للصفحة الرئيسية
 HTML_TEMPLATE = """
@@ -923,7 +944,7 @@ def run_bot():
     logging.info("Bot started successfully!")
     application.run_polling()
 
-# Основная функция
+    # Основная функция
 def main():
     logging.info("Starting application...")
     
@@ -931,17 +952,28 @@ def main():
     flask_thread = threading.Thread(target=run_flask, daemon=True)
     flask_thread.start()
     logging.info(f"Flask web server started on port {FLASK_PORT}")
+
+    # Start the scheduler for checking PAIR_SITE availability
+    scheduler = BackgroundScheduler()
+    scheduler.add_job(check_pair_site_availability, 'interval', minutes=1)
+    scheduler.start()
+    logging.info("PAIR_SITE availability checker started.")
     
-    # تشغيل البوت في الـ main thread
-    if BOT_TOKEN:
-        run_bot()
-    else:
-        logging.warning("BOT_TOKEN not set. Running web server only.")
-        # إبقاء البرنامج يعمل إذا كان البوت غير مفعل
-        try:
-            flask_thread.join()
-        except KeyboardInterrupt:
-            logging.info("Application stopped by user")
+    try:
+        # تشغيل البوت في الـ main thread
+        if BOT_TOKEN:
+            run_bot()
+        else:
+            logging.warning("BOT_TOKEN not set. Running web server only.")
+            # إبقاء البرنامج يعمل إذا كان البوت غير مفعل
+            try:
+                flask_thread.join()
+            except KeyboardInterrupt:
+                logging.info("Application stopped by user")
+    finally:
+        scheduler.shutdown()
+        logging.info("Scheduler shut down.")
+
 
 if __name__ == '__main__':
     main()

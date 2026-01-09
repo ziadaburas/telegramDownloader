@@ -6,3 +6,4 @@ pyquery
 requests
 python-dotenv
 flask
+APScheduler
