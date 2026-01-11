@@ -7,7 +7,8 @@ from io import BytesIO
 from datetime import datetime, timedelta
 from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
 from telegram.ext import ApplicationBuilder, CommandHandler, MessageHandler, CallbackQueryHandler, filters, ContextTypes
-from pybalt import download as pybalt_download
+from pytubefix import YouTube
+from pytubefix.cli import on_progress
 import requests
 from dotenv import load_dotenv
 from flask import Flask, render_template_string, request, send_file, jsonify
@@ -339,73 +340,83 @@ def estimate_audio_size(duration_seconds: int, bitrate: int) -> int:
 
 
 async def get_video_formats(url: str) -> dict:
-    """جلب جميع الجودات المتاحة للفيديو باستخدام pybalt"""
+    """جلب جميع الجودات المتاحة للفيديو باستخدام pytubefix"""
     try:
-        # جودات الفيديو المتاحة في pybalt (cobalt)
-        video_qualities = [144, 240, 360, 480, 720, 1080, 1440, 2160, 4320]
-        audio_bitrates = [64, 128, 192, 256, 320]
+        # إنشاء كائن YouTube
+        yt = YouTube(url, on_progress_callback=on_progress)
+        
+        title = yt.title or "فيديو يوتيوب"
+        duration = yt.length or 0
+        thumbnail = yt.thumbnail_url or ''
         
         video_formats = []
         audio_formats = []
         
-        # جلب معلومات الفيديو من يوتيوب
-        title = "فيديو يوتيوب"
-        duration = 0
-        video_id = extract_video_id(url)
+        # جلب streams الفيديو (progressive = فيديو + صوت معاً)
+        progressive_streams = yt.streams.filter(progressive=True, file_extension='mp4').order_by('resolution').desc()
         
-        try:
-            if video_id:
-                # جلب العنوان من oEmbed
-                oembed_url = f"https://www.youtube.com/oembed?url=https://www.youtube.com/watch?v={video_id}&format=json"
-                async with aiohttp.ClientSession() as session:
-                    async with session.get(oembed_url) as response:
-                        if response.status == 200:
-                            data = await response.json()
-                            title = data.get('title', 'فيديو يوتيوب')
-                
-                # محاولة جلب المدة من noembed API
-                noembed_url = f"https://noembed.com/embed?url=https://www.youtube.com/watch?v={video_id}"
-                async with aiohttp.ClientSession() as session:
-                    async with session.get(noembed_url) as response:
-                        if response.status == 200:
-                            data = await response.json()
-                            # noembed لا يوفر المدة مباشرة، لذا نستخدم قيمة افتراضية
-                            
-                # محاولة جلب المدة من returnyoutubedislike API أو طريقة أخرى
-                # نستخدم قيمة افتراضية 3 دقائق إذا لم نتمكن من جلب المدة
-                duration = 180  # 3 دقائق افتراضي
-                
-        except Exception as e:
-            logging.warning(f"Could not fetch video info: {e}")
-            duration = 180  # 3 دقائق افتراضي
+        # جلب streams الفيديو فقط (للجودات العالية)
+        video_only_streams = yt.streams.filter(adaptive=True, only_video=True, file_extension='mp4').order_by('resolution').desc()
         
-        # إنشاء قائمة جودات الفيديو مع الأحجام التقديرية
-        for quality in video_qualities:
-            estimated_size = estimate_video_size(duration, quality)
-            video_formats.append({
-                'format_id': f'video_{quality}',
-                'resolution': f'{quality}p',
-                'ext': 'mp4',
-                'size': format_size(estimated_size)
-            })
+        # جلب streams الصوت
+        audio_streams = yt.streams.filter(only_audio=True).order_by('abr').desc()
         
-        # إنشاء قائمة جودات الصوت مع الأحجام التقديرية
-        for bitrate in audio_bitrates:
-            estimated_size = estimate_audio_size(duration, bitrate)
-            audio_formats.append({
-                'format_id': f'audio_{bitrate}',
-                'bitrate': f'{bitrate}kbps',
-                'ext': 'mp3',
-                'size': format_size(estimated_size)
-            })
+        seen_resolutions = set()
+        
+        # إضافة progressive streams أولاً (فيديو + صوت)
+        for stream in progressive_streams:
+            resolution = stream.resolution
+            if resolution and resolution not in seen_resolutions:
+                seen_resolutions.add(resolution)
+                filesize = stream.filesize or 0
+                video_formats.append({
+                    'format_id': f'prog_{stream.itag}',
+                    'resolution': resolution,
+                    'ext': 'mp4',
+                    'size': format_size(filesize),
+                    'itag': stream.itag
+                })
+        
+        # إضافة video only streams (للجودات العالية)
+        for stream in video_only_streams:
+            resolution = stream.resolution
+            if resolution and resolution not in seen_resolutions:
+                seen_resolutions.add(resolution)
+                filesize = stream.filesize or 0
+                video_formats.append({
+                    'format_id': f'video_{stream.itag}',
+                    'resolution': resolution,
+                    'ext': 'mp4',
+                    'size': format_size(filesize),
+                    'itag': stream.itag
+                })
+        
+        # ترتيب جودات الفيديو من الأعلى للأقل
+        video_formats.sort(key=lambda x: int(x['resolution'].replace('p', '')), reverse=True)
+        
+        seen_bitrates = set()
+        
+        # إضافة audio streams
+        for stream in audio_streams:
+            abr = stream.abr
+            if abr and abr not in seen_bitrates:
+                seen_bitrates.add(abr)
+                filesize = stream.filesize or 0
+                audio_formats.append({
+                    'format_id': f'audio_{stream.itag}',
+                    'bitrate': abr,
+                    'ext': stream.subtype or 'mp4',
+                    'size': format_size(filesize),
+                    'itag': stream.itag
+                })
         
         return {
             'success': True,
             'title': title,
             'duration': duration,
-            'thumbnail': '',
-            'video_formats': video_formats,
-            'audio_formats': audio_formats,
+            'thumbnail': thumbnail,
+            'video_formats': video_formats[:10],  # أول 10 جودات
+            'audio_formats': audio_formats[:5],   # أول 5 جودات صوت
             'url': url
         }
         
@@ -442,24 +453,24 @@ def create_format_keyboard(video_info: dict, chat_id: int) -> InlineKeyboardMark
     
     for i in range(max_rows):
         row = []
-        # زر الفيديو - تضمين video_id في callback_data
+        # زر الفيديو - تضمين itag و video_id في callback_data
         if i < len(video_formats):
             fmt = video_formats[i]
             btn_text = f"{fmt['resolution']}-{fmt['ext']} ({fmt['size']})"
-            # الصيغة: v_الجودة_video_id
-            quality = fmt['format_id'].replace('video_', '')
-            callback_data = f"v_{quality}_{video_id}"
+            # الصيغة: v_itag_video_id
+            itag = fmt.get('itag', '')
+            callback_data = f"v_{itag}_{video_id}"
             row.append(InlineKeyboardButton(btn_text, callback_data=callback_data))
         else:
             row.append(InlineKeyboardButton(" ", callback_data="empty"))
         
-        # زر الصوت - تضمين video_id في callback_data
+        # زر الصوت - تضمين itag و video_id في callback_data
         if i < len(audio_formats):
             fmt = audio_formats[i]
             btn_text = f"{fmt['bitrate']}-{fmt['ext']} ({fmt['size']})"
-            # الصيغة: a_البت_video_id
-            bitrate = fmt['format_id'].replace('audio_', '')
-            callback_data = f"a_{bitrate}_{video_id}"
+            # الصيغة: a_itag_video_id
+            itag = fmt.get('itag', '')
+            callback_data = f"a_{itag}_{video_id}"
             row.append(InlineKeyboardButton(btn_text, callback_data=callback_data))
         else:
             row.append(InlineKeyboardButton(" ", callback_data="empty"))
@@ -472,60 +483,38 @@ def create_format_keyboard(video_info: dict, chat_id: int) -> InlineKeyboardMark
     return InlineKeyboardMarkup(keyboard)
 
 
-async def download_youtube_with_format(url: str, format_id: str, is_audio: bool = False):
-    """تحميل فيديو يوتيوب بجودة محددة باستخدام pybalt"""
+async def download_youtube_with_format(url: str, itag: int, is_audio: bool = False):
+    """تحميل فيديو يوتيوب بجودة محددة باستخدام pytubefix"""
     temp_dir = None
     try:
         temp_dir = tempfile.mkdtemp()
         
-        # استخراج الجودة من format_id
-        if is_audio:
-            # format_id مثل: audio_128
-            bitrate = format_id.replace('audio_', '')
-            
-            # تحميل باستخدام pybalt
-            file_path = await pybalt_download(
-                url=url,
-                folder=temp_dir,
-                audioFormat="mp3",
-                audioBitrate=bitrate,
-                downloadMode="audio"
-            )
-            ext = 'mp3'
-        else:
-            # format_id مثل: video_720
-            quality = format_id.replace('video_', '')
-            
-            # تحميل باستخدام pybalt
-            file_path = await pybalt_download(
-                url=url,
-                folder=temp_dir,
-                videoQuality=quality,
-                downloadMode="auto"
-            )
-            ext = 'mp4'
+        # إنشاء كائن YouTube
+        yt = YouTube(url, on_progress_callback=on_progress)
         
-        # قراءة الملف المحمل
+        # الحصول على stream بواسطة itag
+        stream = yt.streams.get_by_itag(itag)
+        
+        if not stream:
+            logging.error(f"Stream with itag {itag} not found")
+            return None, None
+        
+        # تحميل الملف
+        file_path = stream.download(output_path=temp_dir)
+        
         if file_path and os.path.exists(file_path):
+            # الحصول على الامتداد
+            ext = file_path.split('.')[-1] if '.' in file_path else ('mp3' if is_audio else 'mp4')
+            
             with open(file_path, 'rb') as f:
                 media_data = BytesIO(f.read())
-            # الحصول على الامتداد الفعلي
-            ext = file_path.split('.')[-1] if '.' in file_path else ext
+            
             return media_data, ext
         
-        # البحث عن أي ملف في المجلد
-        for file in os.listdir(temp_dir):
-            file_path = os.path.join(temp_dir, file)
-            if os.path.isfile(file_path):
-                ext = file.split('.')[-1]
-                with open(file_path, 'rb') as f:
-                    media_data = BytesIO(f.read())
-                return media_data, ext
-                
         return None, None
         
     except Exception as e:
-        logging.error(f"Error downloading YouTube video with pybalt: {e}")
+        logging.error(f"Error downloading YouTube video with pytubefix: {e}")
         return None, None
     finally:
         if temp_dir and os.path.exists(temp_dir):
@@ -621,23 +610,17 @@ async def handle_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if data.startswith("v_") or data.startswith("a_"):
         is_audio = data.startswith("a_")
         parts = data.split("_")
-        # الصيغة: v_الجودة_video_id أو a_البت_video_id
-        quality_or_bitrate = parts[1]
+        # الصيغة: v_itag_video_id أو a_itag_video_id
+        itag = int(parts[1])
         video_id = parts[2]
         
         # بناء رابط يوتيوب من video_id
         url = f"https://www.youtube.com/watch?v={video_id}"
         
-        # بناء format_id
-        if is_audio:
-            format_id = f"audio_{quality_or_bitrate}"
-        else:
-            format_id = f"video_{quality_or_bitrate}"
-        
         await query.edit_message_text("⏳ جاري التحميل... يرجى الانتظار")
         
-        # تحميل الفيديو
-        media_data, ext = await download_youtube_with_format(url, format_id, is_audio)
+        # تحميل الفيديو باستخدام itag
+        media_data, ext = await download_youtube_with_format(url, itag, is_audio)
         
         if media_data is None:
             await query.edit_message_text("❌ حدث خطأ أثناء التحميل. حاول مرة أخرى.")
@@ -757,9 +740,13 @@ def download():
         if not is_youtube_url(url):
             return jsonify({'error': 'رابط غير مدعوم'}), 400
         
+        # استخراج itag من format_id
+        # format_id مثل: video_18 أو audio_140 أو prog_22
+        itag = int(format_id.split('_')[-1])
+        
         loop = asyncio.new_event_loop()
         asyncio.set_event_loop(loop)
-        media_data, ext = loop.run_until_complete(download_youtube_with_format(url, format_id, is_audio))
+        media_data, ext = loop.run_until_complete(download_youtube_with_format(url, itag, is_audio))
         loop.close()
         
         if media_data is None:

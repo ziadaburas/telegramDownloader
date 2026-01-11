@@ -1,7 +1,7 @@
 python-telegram-bot
-pybalt
-yt-dlp
+pytubefix
 instaloader
+yt-dlp
 aiohttp
 pyquery
 requests
