@@ -1,4 +1,5 @@
 python-telegram-bot
+pybalt
 yt-dlp
 instaloader
 aiohttp

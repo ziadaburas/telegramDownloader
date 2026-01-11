@@ -7,13 +7,14 @@ from io import BytesIO
 from datetime import datetime, timedelta
 from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
 from telegram.ext import ApplicationBuilder, CommandHandler, MessageHandler, CallbackQueryHandler, filters, ContextTypes
-from yt_dlp import YoutubeDL
+from pybalt import download as pybalt_download
 import requests
 from dotenv import load_dotenv
 from flask import Flask, render_template_string, request, send_file, jsonify
 import threading
 import asyncio
 from apscheduler.schedulers.background import BackgroundScheduler
+import aiohttp
 
 # تحميل متغيرات البيئة
 load_dotenv()
@@ -295,85 +296,67 @@ HTML_TEMPLATE = """
 """
 
 async def get_video_formats(url: str) -> dict:
-    """جلب جميع الجودات المتاحة للفيديو"""
+    """جلب جميع الجودات المتاحة للفيديو باستخدام pybalt"""
     try:
-        ydl_opts = {
-            'quiet': True,
-            'no_warnings': True,
+        # جودات الفيديو المتاحة في pybalt (cobalt)
+        video_qualities = ['144', '240', '360', '480', '720', '1080', '1440', '2160', '4320']
+        audio_bitrates = ['64', '128', '192', '256', '320']
+        
+        video_formats = []
+        audio_formats = []
+        
+        # إنشاء قائمة جودات الفيديو
+        for quality in video_qualities:
+            video_formats.append({
+                'format_id': f'video_{quality}',
+                'resolution': f'{quality}p',
+                'ext': 'mp4',
+                'size': 'متغير'
+            })
+        
+        # إنشاء قائمة جودات الصوت
+        for bitrate in audio_bitrates:
+            audio_formats.append({
+                'format_id': f'audio_{bitrate}',
+                'bitrate': f'{bitrate}kbps',
+                'ext': 'mp3',
+                'size': 'متغير'
+            })
+        
+        # جلب عنوان الفيديو من يوتيوب
+        title = "فيديو يوتيوب"
+        duration = 0
+        
+        try:
+            # محاولة جلب معلومات الفيديو من oEmbed API
+            video_id = None
+            if 'youtube.com/watch?v=' in url:
+                video_id = url.split('v=')[1].split('&')[0]
+            elif 'youtu.be/' in url:
+                video_id = url.split('youtu.be/')[1].split('?')[0]
+            elif 'youtube.com/shorts/' in url:
+                video_id = url.split('shorts/')[1].split('?')[0]
+            
+            if video_id:
+                oembed_url = f"https://www.youtube.com/oembed?url=https://www.youtube.com/watch?v={video_id}&format=json"
+                async with aiohttp.ClientSession() as session:
+                    async with session.get(oembed_url) as response:
+                        if response.status == 200:
+                            data = await response.json()
+                            title = data.get('title', 'فيديو يوتيوب')
+        except Exception as e:
+            logging.warning(f"Could not fetch video title: {e}")
+        
+        return {
+            'success': True,
+            'title': title,
+            'duration': duration,
+            'thumbnail': '',
+            'video_formats': video_formats,
+            'audio_formats': audio_formats,
+            'url': url
         }
         
-        with YoutubeDL(ydl_opts) as ydl:
-            info = ydl.extract_info(url, download=False)
-            
-            video_formats = []
-            audio_formats = []
-            
-            formats = info.get('formats', [])
-            
-            for f in formats:
-                format_id = f.get('format_id', '')
-                ext = f.get('ext', 'mp4')
-                filesize = f.get('filesize') or f.get('filesize_approx', 0)
-                
-                # فيديو مع صوت أو فيديو فقط
-                if f.get('vcodec') != 'none':
-                    height = f.get('height', 0)
-                    if height:
-                        video_formats.append({
-                            'format_id': format_id,
-                            'resolution': f"{height}p",
-                            'ext': ext,
-                            'filesize': filesize,
-                            'has_audio': f.get('acodec') != 'none'
-                        })
-                # صوت فقط
-                elif f.get('acodec') != 'none' and f.get('vcodec') == 'none':
-                    abr = f.get('abr', 0)
-                    if abr:
-                        audio_formats.append({
-                            'format_id': format_id,
-                            'bitrate': f"{int(abr)}kbps",
-                            'ext': ext,
-                            'filesize': filesize,
-                        })
-            
-            # إزالة التكرارات وترتيب الجودات
-            seen_video = set()
-            unique_video = []
-            for v in sorted(video_formats, key=lambda x: int(x['resolution'].replace('p', '')), reverse=True):
-                key = f"{v['resolution']}-{v['ext']}"
-                if key not in seen_video:
-                    seen_video.add(key)
-                    unique_video.append({
-                        'format_id': v['format_id'],
-                        'resolution': v['resolution'],
-                        'ext': v['ext'],
-                        'size': format_size(v['filesize'])
-                    })
-            
-            seen_audio = set()
-            unique_audio = []
-            for a in sorted(audio_formats, key=lambda x: int(x['bitrate'].replace('kbps', '')), reverse=True):
-                key = f"{a['bitrate']}-{a['ext']}"
-                if key not in seen_audio:
-                    seen_audio.add(key)
-                    unique_audio.append({
-                        'format_id': a['format_id'],
-                        'bitrate': a['bitrate'],
-                        'ext': a['ext'],
-                        'size': format_size(a['filesize'])
-                    })
-            
-            return {
-                'success': True,
-                'title': info.get('title', 'فيديو'),
-                'duration': info.get('duration', 0),
-                'thumbnail': info.get('thumbnail', ''),
-                'video_formats': unique_video[:10],
-                'audio_formats': unique_audio[:5],
-                'url': url
-            }
-            
     except Exception as e:
         logging.error(f"Error getting video formats: {e}")
         return {
@@ -430,35 +413,50 @@ def create_format_keyboard(video_info: dict, chat_id: int) -> InlineKeyboardMark
 
 
 async def download_youtube_with_format(url: str, format_id: str, is_audio: bool = False):
-    """تحميل فيديو يوتيوب بجودة محددة"""
+    """تحميل فيديو يوتيوب بجودة محددة باستخدام pybalt"""
     temp_dir = None
     try:
         temp_dir = tempfile.mkdtemp()
         
+        # استخراج الجودة من format_id
         if is_audio:
-            ydl_opts = {
-                'format': format_id,
-                'outtmpl': f"{temp_dir}/audio.%(ext)s",
-                'quiet': True,
-                'postprocessors': [{
-                    'key': 'FFmpegExtractAudio',
-                    'preferredcodec': 'mp3',
-                    'preferredquality': '192',
-                }],
-            }
-        else:
-            ydl_opts = {
-                'format': f"{format_id}+bestaudio/best",
-                'outtmpl': f"{temp_dir}/video.%(ext)s",
-                'quiet': True,
-                'merge_output_format': 'mp4',
-            }
-        
-        with YoutubeDL(ydl_opts) as ydl:
-            ydl.download([url])
+            # format_id مثل: audio_128
+            bitrate = format_id.replace('audio_', '')
             
-            for file in os.listdir(temp_dir):
-                file_path = os.path.join(temp_dir, file)
+            # تحميل باستخدام pybalt
+            file_path = await pybalt_download(
+                url=url,
+                folder=temp_dir,
+                audioFormat="mp3",
+                audioBitrate=bitrate,
+                downloadMode="audio"
+            )
+            ext = 'mp3'
+        else:
+            # format_id مثل: video_720
+            quality = format_id.replace('video_', '')
+            
+            # تحميل باستخدام pybalt
+            file_path = await pybalt_download(
+                url=url,
+                folder=temp_dir,
+                videoQuality=quality,
+                downloadMode="auto"
+            )
+            ext = 'mp4'
+        
+        # قراءة الملف المحمل
+        if file_path and os.path.exists(file_path):
+            with open(file_path, 'rb') as f:
+                media_data = BytesIO(f.read())
+            # الحصول على الامتداد الفعلي
+            ext = file_path.split('.')[-1] if '.' in file_path else ext
+            return media_data, ext
+        
+        # البحث عن أي ملف في المجلد
+        for file in os.listdir(temp_dir):
+            file_path = os.path.join(temp_dir, file)
+            if os.path.isfile(file_path):
                 ext = file.split('.')[-1]
                 with open(file_path, 'rb') as f:
                     media_data = BytesIO(f.read())
@@ -467,7 +465,7 @@ async def download_youtube_with_format(url: str, format_id: str, is_audio: bool 
         return None, None
         
     except Exception as e:
-        logging.error(f"Error downloading YouTube video: {e}")
+        logging.error(f"Error downloading YouTube video with pybalt: {e}")
         return None, None
     finally:
         if temp_dir and os.path.exists(temp_dir):
