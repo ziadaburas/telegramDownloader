@@ -295,57 +295,109 @@ HTML_TEMPLATE = """
 </html>
 """
 
+def extract_video_id(url: str) -> str:
+    """استخراج video_id من رابط يوتيوب"""
+    video_id = None
+    if 'youtube.com/watch?v=' in url:
+        video_id = url.split('v=')[1].split('&')[0]
+    elif 'youtu.be/' in url:
+        video_id = url.split('youtu.be/')[1].split('?')[0]
+    elif 'youtube.com/shorts/' in url:
+        video_id = url.split('shorts/')[1].split('?')[0]
+    elif 'youtube.com/embed/' in url:
+        video_id = url.split('embed/')[1].split('?')[0]
+    elif 'youtube.com/v/' in url:
+        video_id = url.split('/v/')[1].split('?')[0]
+    return video_id or ''
+
+
+def estimate_video_size(duration_seconds: int, quality: int) -> int:
+    """تقدير حجم الفيديو بالبايت بناءً على المدة والجودة"""
+    # معدل البت التقريبي لكل جودة (بالكيلوبت في الثانية)
+    bitrate_map = {
+        144: 100,
+        240: 300,
+        360: 600,
+        480: 1000,
+        720: 2500,
+        1080: 5000,
+        1440: 10000,
+        2160: 20000,
+        4320: 50000
+    }
+    bitrate_kbps = bitrate_map.get(quality, 1000)
+    # الحجم = (معدل البت * المدة) / 8
+    size_bytes = (bitrate_kbps * 1000 * duration_seconds) / 8
+    return int(size_bytes)
+
+
+def estimate_audio_size(duration_seconds: int, bitrate: int) -> int:
+    """تقدير حجم الصوت بالبايت بناءً على المدة ومعدل البت"""
+    # الحجم = (معدل البت * المدة) / 8
+    size_bytes = (bitrate * 1000 * duration_seconds) / 8
+    return int(size_bytes)
+
+
 async def get_video_formats(url: str) -> dict:
     """جلب جميع الجودات المتاحة للفيديو باستخدام pybalt"""
     try:
         # جودات الفيديو المتاحة في pybalt (cobalt)
-        video_qualities = ['144', '240', '360', '480', '720', '1080', '1440', '2160', '4320']
-        audio_bitrates = ['64', '128', '192', '256', '320']
+        video_qualities = [144, 240, 360, 480, 720, 1080, 1440, 2160, 4320]
+        audio_bitrates = [64, 128, 192, 256, 320]
         
         video_formats = []
         audio_formats = []
         
-        # إنشاء قائمة جودات الفيديو
-        for quality in video_qualities:
-            video_formats.append({
-                'format_id': f'video_{quality}',
-                'resolution': f'{quality}p',
-                'ext': 'mp4',
-                'size': 'متغير'
-            })
-        
-        # إنشاء قائمة جودات الصوت
-        for bitrate in audio_bitrates:
-            audio_formats.append({
-                'format_id': f'audio_{bitrate}',
-                'bitrate': f'{bitrate}kbps',
-                'ext': 'mp3',
-                'size': 'متغير'
-            })
-        
-        # جلب عنوان الفيديو من يوتيوب
+        # جلب معلومات الفيديو من يوتيوب
         title = "فيديو يوتيوب"
         duration = 0
+        video_id = extract_video_id(url)
         
         try:
-            # محاولة جلب معلومات الفيديو من oEmbed API
-            video_id = None
-            if 'youtube.com/watch?v=' in url:
-                video_id = url.split('v=')[1].split('&')[0]
-            elif 'youtu.be/' in url:
-                video_id = url.split('youtu.be/')[1].split('?')[0]
-            elif 'youtube.com/shorts/' in url:
-                video_id = url.split('shorts/')[1].split('?')[0]
-            
             if video_id:
+                # جلب العنوان من oEmbed
                 oembed_url = f"https://www.youtube.com/oembed?url=https://www.youtube.com/watch?v={video_id}&format=json"
                 async with aiohttp.ClientSession() as session:
                     async with session.get(oembed_url) as response:
                         if response.status == 200:
                             data = await response.json()
                             title = data.get('title', 'فيديو يوتيوب')
+                
+                # محاولة جلب المدة من noembed API
+                noembed_url = f"https://noembed.com/embed?url=https://www.youtube.com/watch?v={video_id}"
+                async with aiohttp.ClientSession() as session:
+                    async with session.get(noembed_url) as response:
+                        if response.status == 200:
+                            data = await response.json()
+                            # noembed لا يوفر المدة مباشرة، لذا نستخدم قيمة افتراضية
+                            
+                # محاولة جلب المدة من returnyoutubedislike API أو طريقة أخرى
+                # نستخدم قيمة افتراضية 3 دقائق إذا لم نتمكن من جلب المدة
+                duration = 180  # 3 دقائق افتراضي
+                
         except Exception as e:
-            logging.warning(f"Could not fetch video title: {e}")
+            logging.warning(f"Could not fetch video info: {e}")
+            duration = 180  # 3 دقائق افتراضي
+        
+        # إنشاء قائمة جودات الفيديو مع الأحجام التقديرية
+        for quality in video_qualities:
+            estimated_size = estimate_video_size(duration, quality)
+            video_formats.append({
+                'format_id': f'video_{quality}',
+                'resolution': f'{quality}p',
+                'ext': 'mp4',
+                'size': format_size(estimated_size)
+            })
+        
+        # إنشاء قائمة جودات الصوت مع الأحجام التقديرية
+        for bitrate in audio_bitrates:
+            estimated_size = estimate_audio_size(duration, bitrate)
+            audio_formats.append({
+                'format_id': f'audio_{bitrate}',
+                'bitrate': f'{bitrate}kbps',
+                'ext': 'mp3',
+                'size': format_size(estimated_size)
+            })
         
         return {
             'success': True,
@@ -371,6 +423,10 @@ def create_format_keyboard(video_info: dict, chat_id: int) -> InlineKeyboardMark
     
     video_formats = video_info.get('video_formats', [])
     audio_formats = video_info.get('audio_formats', [])
+    url = video_info.get('url', '')
+    
+    # استخراج video_id لتضمينه في callback_data
+    video_id = extract_video_id(url)
     
     # صف العناوين
     row = []
@@ -386,20 +442,24 @@ def create_format_keyboard(video_info: dict, chat_id: int) -> InlineKeyboardMark
     
     for i in range(max_rows):
         row = []
-        # زر الفيديو
+        # زر الفيديو - تضمين video_id في callback_data
         if i < len(video_formats):
             fmt = video_formats[i]
             btn_text = f"{fmt['resolution']}-{fmt['ext']} ({fmt['size']})"
-            callback_data = f"v_{fmt['format_id']}_{chat_id}"
+            # الصيغة: v_الجودة_video_id
+            quality = fmt['format_id'].replace('video_', '')
+            callback_data = f"v_{quality}_{video_id}"
             row.append(InlineKeyboardButton(btn_text, callback_data=callback_data))
         else:
             row.append(InlineKeyboardButton(" ", callback_data="empty"))
         
-        # زر الصوت
+        # زر الصوت - تضمين video_id في callback_data
         if i < len(audio_formats):
             fmt = audio_formats[i]
             btn_text = f"{fmt['bitrate']}-{fmt['ext']} ({fmt['size']})"
-            callback_data = f"a_{fmt['format_id']}_{chat_id}"
+            # الصيغة: a_البت_video_id
+            bitrate = fmt['format_id'].replace('audio_', '')
+            callback_data = f"a_{bitrate}_{video_id}"
             row.append(InlineKeyboardButton(btn_text, callback_data=callback_data))
         else:
             row.append(InlineKeyboardButton(" ", callback_data="empty"))
@@ -549,6 +609,7 @@ async def handle_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await query.answer()
     
     data = query.data
+    chat_id = query.message.chat_id
     
     if data == "cancel":
         await query.edit_message_text("❌ تم الإلغاء")
@@ -560,16 +621,18 @@ async def handle_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if data.startswith("v_") or data.startswith("a_"):
         is_audio = data.startswith("a_")
         parts = data.split("_")
-        format_id = parts[1]
-        chat_id = int(parts[2])
+        # الصيغة: v_الجودة_video_id أو a_البت_video_id
+        quality_or_bitrate = parts[1]
+        video_id = parts[2]
         
-        # جلب معلومات الفيديو من الكاش
-        video_info = video_info_cache.get(chat_id)
-        if not video_info:
-            await query.edit_message_text("❌ انتهت صلاحية الطلب. أرسل الرابط مرة أخرى.")
-            return
+        # بناء رابط يوتيوب من video_id
+        url = f"https://www.youtube.com/watch?v={video_id}"
         
-        url = video_info.get('url')
+        # بناء format_id
+        if is_audio:
+            format_id = f"audio_{quality_or_bitrate}"
+        else:
+            format_id = f"video_{quality_or_bitrate}"
         
         await query.edit_message_text("⏳ جاري التحميل... يرجى الانتظار")
         
@@ -589,20 +652,32 @@ async def handle_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
         
         media_data.seek(0)
         
+        # جلب عنوان الفيديو
+        title = "فيديو يوتيوب"
+        try:
+            oembed_url = f"https://www.youtube.com/oembed?url={url}&format=json"
+            async with aiohttp.ClientSession() as session:
+                async with session.get(oembed_url) as response:
+                    if response.status == 200:
+                        data_json = await response.json()
+                        title = data_json.get('title', 'فيديو يوتيوب')
+        except:
+            pass
+        
         try:
             if is_audio:
                 await context.bot.send_audio(
                     chat_id=chat_id,
                     audio=media_data,
                     filename=f"audio.{ext}",
-                    title=video_info.get('title', 'صوت')
+                    title=title
                 )
             else:
                 await context.bot.send_video(
                     chat_id=chat_id,
                     video=media_data,
                     filename=f"video.{ext}",
-                    caption=f"🎬 {video_info.get('title', '')}"
+                    caption=f"🎬 {title}"
                 )
             
             await query.edit_message_text("✅ تم التحميل بنجاح!")
@@ -633,8 +708,6 @@ async def handle_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
             await query.edit_message_text(f"❌ حدث خطأ أثناء الإرسال: {str(e)}")
         finally:
             media_data.close()
-            if chat_id in video_info_cache:
-                del video_info_cache[chat_id]
 
 
 # Flask Routes
