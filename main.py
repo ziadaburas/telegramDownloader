@@ -26,6 +26,17 @@ CHANNEL_ID = os.getenv("CHANNEL_ID")
 FLASK_PORT = int(os.getenv("FLASK_PORT", "5000"))
 PAIR_SITE = os.getenv("PAIR_SITE") # New: PAIR_SITE environment variable
 
+# إعداد ملف cookies
+COOKIES_FILE = "cookies.txt"
+if not os.path.exists(COOKIES_FILE):
+    cookies_content = os.getenv("COOKIES")
+    if cookies_content:
+        with open(COOKIES_FILE, 'w') as f:
+            f.write(cookies_content)
+        logging.info("cookies.txt created from COOKIES environment variable")
+    else:
+        logging.warning("cookies.txt not found and COOKIES environment variable not set")
+
 # Константы
 MAX_FILE_SIZE = 50 * 1024 * 1024  # 50 MB
 MAX_REQUESTS_PER_MINUTE = 5  # Ограничение на 5 запросов в минуту
@@ -629,6 +640,11 @@ async def download_instagram_media(url: str) -> BytesIO:
             'outtmpl': f"{temp_dir}/vid.mp4",
             'quiet': True,
         }
+        
+        # إضافة ملف cookies إذا كان موجوداً
+        if os.path.exists(COOKIES_FILE):
+            ydl_opts['cookiefile'] = COOKIES_FILE
+        
         with YoutubeDL(ydl_opts) as ydl:
             ydl.download([url])
             
@@ -746,6 +762,11 @@ async def download_youtube_video(url: str) -> BytesIO:
             'outtmpl': f"{temp_dir}/vid.mp4",
             'quiet': True,
         }
+        
+        # إضافة ملف cookies إذا كان موجوداً
+        if os.path.exists(COOKIES_FILE):
+            ydl_opts['cookiefile'] = COOKIES_FILE
+        
         with YoutubeDL(ydl_opts) as ydl:
             ydl.download([url])
             
@@ -777,6 +798,11 @@ async def download_tiktok_video(url: str) -> BytesIO:
                 'Referer': 'https://www.tiktok.com/',
             }
         }
+        
+        # إضافة ملف cookies إذا كان موجوداً
+        if os.path.exists(COOKIES_FILE):
+            ydl_opts['cookiefile'] = COOKIES_FILE
+        
         with YoutubeDL(ydl_opts) as ydl:
             ydl.download([url])
             
@@ -804,6 +830,11 @@ async def download_facebook_video(url: str) -> BytesIO:
             'outtmpl': f"{temp_dir}/vid.mp4",
             'quiet': True,
         }
+        
+        # إضافة ملف cookies إذا كان موجوداً
+        if os.path.exists(COOKIES_FILE):
+            ydl_opts['cookiefile'] = COOKIES_FILE
+        
         with YoutubeDL(ydl_opts) as ydl:
             ydl.download([url])
             
