@@ -639,6 +639,7 @@ async def download_instagram_media(url: str) -> BytesIO:
             'format': 'best',
             'outtmpl': f"{temp_dir}/vid.mp4",
             'quiet': True,
+            'force_generic_extractor': False,
         }
         
         # إضافة ملف cookies إذا كان موجوداً
@@ -646,6 +647,9 @@ async def download_instagram_media(url: str) -> BytesIO:
             ydl_opts['cookiefile'] = COOKIES_FILE
         
         with YoutubeDL(ydl_opts) as ydl:
+            info = ydl.extract_info(url, download=False)
+            if 'instagram' not in info.get('extractor', '').lower():
+                return "الرابط ليس من Instagram"
             ydl.download([url])
             
             # قراءة الملف من القرص إلى الذاكرة
@@ -761,6 +765,7 @@ async def download_youtube_video(url: str) -> BytesIO:
             'format': 'best',
             'outtmpl': f"{temp_dir}/vid.mp4",
             'quiet': True,
+            'force_generic_extractor': False,
         }
         
         # إضافة ملف cookies إذا كان موجوداً
@@ -768,6 +773,9 @@ async def download_youtube_video(url: str) -> BytesIO:
             ydl_opts['cookiefile'] = COOKIES_FILE
         
         with YoutubeDL(ydl_opts) as ydl:
+            info = ydl.extract_info(url, download=False)
+            if 'youtube' not in info.get('extractor', '').lower():
+                return "الرابط ليس من YouTube"
             ydl.download([url])
             
             file_path = f"{temp_dir}/vid.mp4"
