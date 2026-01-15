@@ -212,7 +212,7 @@ async def handle_message(client: Client, message: Message):
             if check_data_size(media_bytes):
                 media_data.seek(0)
                 if result['is_video']:
-                    await message.reply_video(video=media_data, file_name="vid.mp4")
+                    await message.reply_video(video=media_data)
                 else:
                     await message.reply_photo(photo=media_data)
                 if result['platform']:
