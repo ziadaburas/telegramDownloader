@@ -288,7 +288,9 @@ async def download_with_ytdlp(url: str) -> BytesIO:
             return named_bytesio(f.read())
     finally:
         shutil.rmtree(temp_dir, ignore_errors=True)
-        subprocess.run(['yt-dlp', '--rm-cache-dir'], capture_output=True)
+        # subprocess.run("command", shell=True, capture_output=True, text=True, timeout=30)
+     
+        # subprocess.run(['yt-dlp', '--rm-cache-dir'], capture_output=True)
 
 async def download_instagram_media(url: str) -> BytesIO:
     return await download_with_ytdlp(url)
