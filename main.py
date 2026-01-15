@@ -399,9 +399,9 @@ def main():
     flask_thread.start()
     logging.info(f"Flask started on port {FLASK_PORT}")
     
-    scheduler = BackgroundScheduler()
-    scheduler.add_job(check_pair_site_availability, 'interval', minutes=1)
-    scheduler.start()
+    # scheduler = BackgroundScheduler()
+    # scheduler.add_job(check_pair_site_availability, 'interval', minutes=1)
+    # scheduler.start()
     
     try:
         if BOT_TOKEN and API_ID and API_HASH:
@@ -410,7 +410,8 @@ def main():
             logging.warning("Bot credentials not set. Running web server only.")
             flask_thread.join()
     finally:
-        scheduler.shutdown()
+        pass
+        # scheduler.shutdown()
 
 if __name__ == '__main__':
     main()
