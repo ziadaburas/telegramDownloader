@@ -287,6 +287,7 @@ async def download_with_ytdlp(url: str) -> BytesIO:
             return named_bytesio(f.read())
     finally:
         shutil.rmtree(temp_dir, ignore_errors=True)
+        shutil.rmtree(os.path.expanduser("~/.cache/yt-dlp"), ignore_errors=True)
 
 async def download_instagram_media(url: str) -> BytesIO:
     return await download_with_ytdlp(url)
