@@ -38,7 +38,7 @@ if not os.path.exists(COOKIES_FILE):
         logging.warning("cookies.txt not found and COOKIES environment variable not set")
 
 # Константы
-MAX_FILE_SIZE = 50 * 1024 * 1024  # 50 MB
+MAX_FILE_SIZE = 100 * 1024 * 1024  # 50 MB
 MAX_REQUESTS_PER_MINUTE = 5  # Ограничение на 5 запросов в минуту
 
 # Словарь для отслеживания запросов
