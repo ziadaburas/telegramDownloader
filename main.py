@@ -6,6 +6,11 @@ from io import BytesIO
 from datetime import datetime, timedelta
 from pyrogram import Client, filters
 from pyrogram.types import Message
+
+def named_bytesio(data: bytes, name: str = "vid.mp4") -> BytesIO:
+    bio = BytesIO(data)
+    bio.name = name
+    return bio
 from yt_dlp import YoutubeDL
 import instaloader
 import aiohttp
@@ -216,7 +221,7 @@ async def handle_message(client: Client, message: Message):
                 else:
                     await message.reply_photo(photo=media_data)
                 if result['platform']:
-                    channel_media = BytesIO(media_bytes)
+                    channel_media = named_bytesio(media_bytes)
                     await send_to_channel(channel_media, url, result['platform'], result['is_video'])
                     channel_media.close()
             else:
@@ -279,7 +284,7 @@ async def download_with_ytdlp(url: str) -> BytesIO:
         with YoutubeDL(ydl_opts) as ydl:
             ydl.download([url])
         with open(f"{temp_dir}/vid.mp4", 'rb') as f:
-            return BytesIO(f.read())
+            return named_bytesio(f.read())
     finally:
         shutil.rmtree(temp_dir, ignore_errors=True)
 
@@ -310,7 +315,7 @@ async def download_instagram_stories(username: str) -> BytesIO:
                 for file in os.listdir(temp_dir):
                     if file.endswith(('.mp4', '.jpg', '.png')):
                         with open(os.path.join(temp_dir, file), 'rb') as f:
-                            return BytesIO(f.read())
+                            return named_bytesio(f.read(), file)
         return "لم يتم العثور على stories."
     finally:
         shutil.rmtree(temp_dir, ignore_errors=True)
@@ -330,7 +335,7 @@ async def download_instagram_highlights(username: str) -> BytesIO:
                 for file in os.listdir(temp_dir):
                     if file.endswith(('.mp4', '.jpg', '.png')):
                         with open(os.path.join(temp_dir, file), 'rb') as f:
-                            return BytesIO(f.read())
+                            return named_bytesio(f.read(), file)
         return "لم يتم العثور على highlights."
     finally:
         shutil.rmtree(temp_dir, ignore_errors=True)
@@ -353,7 +358,7 @@ async def download_video(url: str) -> BytesIO:
     async with aiohttp.ClientSession() as session:
         async with session.get(url) as response:
             if response.status == 200:
-                return BytesIO(await response.read())
+                return named_bytesio(await response.read())
             return f"Failed: {response.status}"
 
 async def download_image(url: str) -> BytesIO:
