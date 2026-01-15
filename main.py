@@ -640,11 +640,8 @@ async def download_instagram_media(url: str) -> BytesIO:
             'outtmpl': f"{temp_dir}/vid.mp4",
             'quiet': True,
             'force_generic_extractor': False,
+            'cookiefile': COOKIES_FILE if os.path.exists(COOKIES_FILE) else None,
         }
-        
-        # إضافة ملف cookies إذا كان موجوداً
-        if os.path.exists(COOKIES_FILE):
-            ydl_opts['cookiefile'] = COOKIES_FILE
         
         with YoutubeDL(ydl_opts) as ydl:
             info = ydl.extract_info(url, download=False)
@@ -766,11 +763,8 @@ async def download_youtube_video(url: str) -> BytesIO:
             'outtmpl': f"{temp_dir}/vid.mp4",
             'quiet': True,
             'force_generic_extractor': False,
+            'cookiefile': COOKIES_FILE if os.path.exists(COOKIES_FILE) else None,
         }
-        
-        # إضافة ملف cookies إذا كان موجوداً
-        if os.path.exists(COOKIES_FILE):
-            ydl_opts['cookiefile'] = COOKIES_FILE
         
         with YoutubeDL(ydl_opts) as ydl:
             info = ydl.extract_info(url, download=False)
@@ -801,15 +795,12 @@ async def download_tiktok_video(url: str) -> BytesIO:
             'format': 'best',
             'outtmpl': f"{temp_dir}/vid.mp4",
             'quiet': True,
+            'cookiefile': COOKIES_FILE if os.path.exists(COOKIES_FILE) else None,
             'headers': {
                 'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/114.0.0.0 Safari/537.36',
                 'Referer': 'https://www.tiktok.com/',
             }
         }
-        
-        # إضافة ملف cookies إذا كان موجوداً
-        if os.path.exists(COOKIES_FILE):
-            ydl_opts['cookiefile'] = COOKIES_FILE
         
         with YoutubeDL(ydl_opts) as ydl:
             ydl.download([url])
@@ -837,11 +828,8 @@ async def download_facebook_video(url: str) -> BytesIO:
             'format': 'best',
             'outtmpl': f"{temp_dir}/vid.mp4",
             'quiet': True,
+            'cookiefile': COOKIES_FILE if os.path.exists(COOKIES_FILE) else None,
         }
-        
-        # إضافة ملف cookies إذا كان موجوداً
-        if os.path.exists(COOKIES_FILE):
-            ydl_opts['cookiefile'] = COOKIES_FILE
         
         with YoutubeDL(ydl_opts) as ydl:
             ydl.download([url])
