@@ -1,5 +1,5 @@
-python-telegram-bot
-pytubefix
+pyrogram
+tgcrypto
 instaloader
 yt-dlp
 aiohttp
