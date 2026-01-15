@@ -189,7 +189,7 @@ async def start(client: Client, message: Message):
         "⚠️ الحد الأقصى لحجم الملف للتحميل: 50 ميجابايت."
     )
 
-@bot.on_message(filters.text & ~filters.command())
+@bot.on_message(filters.text & filters.private & ~filters.regex(r"^/"))
 async def handle_message(client: Client, message: Message):
     user_id = message.from_user.id
     url = message.text
